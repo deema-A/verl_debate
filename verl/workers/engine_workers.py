@@ -450,9 +450,16 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         self.actor: TrainingWorker = None
         self.ref: TrainingWorker = None
         self.rollout: BaseRollout = None
-        assert self.role in ["actor", "rollout", "ref", "actor_rollout", "actor_rollout_ref"]
-        self._is_actor = self.role in ["actor", "actor_rollout", "actor_rollout_ref"]
-        self._is_rollout = self.role in ["rollout", "actor_rollout", "actor_rollout_ref"]
+        assert self.role in [
+            "actor",
+            "rollout",
+            "ref",
+            "actor_rollout",
+            "actor_rollout_ref",
+            "actor_rollout_b",
+        ]
+        self._is_actor = self.role in ["actor", "actor_rollout", "actor_rollout_ref", "actor_rollout_b"]
+        self._is_rollout = self.role in ["rollout", "actor_rollout", "actor_rollout_ref", "actor_rollout_b"]
         self._is_ref = self.role in ["ref", "actor_rollout_ref"]
 
         if self._is_actor:
@@ -488,6 +495,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
     def to(self, device, model=True, optimizer=True, grad=True):
         """Manual control of load/offload"""
         self.actor.to(device=device, model=model, optimizer=optimizer, grad=grad)
+
+    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    def empty_training_cuda_cache(self):
+        """Return cached CUDA memory to the driver before colocated vLLM spawn (mem_get_info preflight)."""
+        aggressive_empty_cache(force_sync=True)
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def init_model(self):

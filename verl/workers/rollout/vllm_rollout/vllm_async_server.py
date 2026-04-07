@@ -1029,4 +1029,8 @@ class vLLMReplica(RolloutReplica):
 
     def _get_server_name_prefix(self) -> str:
         """Return the Ray actor name prefix (e.g. 'vllm_' or 'vllm_omni_')."""
+        p = getattr(self.config, "http_ray_server_actor_name_prefix", None)
+        if p:
+            s = str(p)
+            return s if s.endswith("_") else f"{s}_"
         return "vllm_"

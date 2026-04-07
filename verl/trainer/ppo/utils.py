@@ -38,6 +38,8 @@ class Role(Enum):
     ActorRolloutRef = 6
     Env = 7
     TeacherModel = 8
+    # Second hybrid actor+rollout worker group (e.g. two-checkpoint debate); do not subclass Enum for this (Py3.12+).
+    ActorRolloutB = 9
 
     def __str__(self):
         return self._get_role_string()
@@ -52,6 +54,7 @@ class Role(Enum):
             Role.RewardModel: "rm",
             Role.ActorRolloutRef: "actor_rollout_ref",
             Role.TeacherModel: "teacher",
+            Role.ActorRolloutB: "actor_rollout_b",
         }
         return role_mapping.get(self, self.name.lower())
 
@@ -65,6 +68,7 @@ class Role(Enum):
             "ref": cls.RefPolicy,
             "rm": cls.RewardModel,
             "actor_rollout_ref": cls.ActorRolloutRef,
+            "actor_rollout_b": cls.ActorRolloutB,
         }
         role = string_mapping.get(name.lower())
         if role is None:

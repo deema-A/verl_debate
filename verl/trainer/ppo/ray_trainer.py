@@ -1062,28 +1062,26 @@ class RayPPOTrainer:
             dp_rank_mapping = worker_group._dispatch_info[role]
         return max(dp_rank_mapping) + 1
 
-    def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen", keep_minibatch=False):
-        """Reorder the data on single controller such that each dp rank gets similar total tokens.
+    def _balance_batch_global_idx(self, batch: DataProto, keep_minibatch: bool = False) -> tuple[torch.Tensor, list, list]:
+        """Compute DP-balancing row permutation from ``batch`` (same logic as ``_balance_batch``).
 
-        When use_prefix_grouper is enabled, uses group-level balancing to keep samples with
-        the same uid together on the same rank for prefix sharing optimization.
+        Returns:
+            global_idx: int64 tensor of row indices to pass to ``DataProto.reorder``.
+            global_partition_lst: partition list for ``log_seqlen_unbalance``.
+            seqlen_list: per-row token counts before reorder (list of int).
         """
         attention_mask = batch.batch["attention_mask"]
         batch_size = attention_mask.shape[0]
         global_seqlen_lst = batch.batch["attention_mask"].view(batch_size, -1).sum(-1)  # (train_batch_size,)
         workload_lst = calculate_workload(global_seqlen_lst)
-        # Get dp_size from dispatch info to correctly balance across data parallel ranks
-        # Note: world_size may include tensor/pipeline parallel dimensions, but we only want DP
         dp_size = self._get_dp_size(self.actor_rollout_wg, "actor")
 
-        # Use group-level balancing for PrefixGrouper to keep same-uid samples together
         if getattr(self, "use_prefix_grouper", False) and "uid" in batch.non_tensor_batch:
             from verl.utils.seqlen_balancing import get_group_balanced_partitions
 
             uid_list = list(batch.non_tensor_batch["uid"])
             seqlen_list = global_seqlen_lst.tolist()
 
-            # Count number of uid groups
             num_groups = len(set(uid_list))
 
             if num_groups % dp_size != 0:
@@ -1102,7 +1100,6 @@ class RayPPOTrainer:
             )
 
         elif keep_minibatch:
-            # Decouple the DP balancing and mini-batching.
             minibatch_size = self.config.actor_rollout_ref.actor.get("ppo_mini_batch_size")
             minibatch_num = len(workload_lst) // minibatch_size
             global_partition_lst = [[] for _ in range(dp_size)]
@@ -1116,19 +1113,26 @@ class RayPPOTrainer:
                     global_partition_lst[j].extend([x + minibatch_size * i for x in part])
         else:
             global_partition_lst = get_seqlen_balanced_partitions(workload_lst, k_partitions=dp_size, equal_size=True)
-        # Place smaller micro-batches at both ends to reduce the bubbles in pipeline parallel.
-        # Skip reordering within partitions for PrefixGrouper to maintain uid grouping
+
         if not getattr(self, "use_prefix_grouper", False):
             for idx, partition in enumerate(global_partition_lst):
                 partition.sort(key=lambda x: (workload_lst[x], x))
                 ordered_partition = partition[::2] + partition[1::2][::-1]
                 global_partition_lst[idx] = ordered_partition
 
-        # reorder based on index. The data will be automatically equally partitioned by dispatch function
         global_idx = torch.tensor([j for partition in global_partition_lst for j in partition])
+        return global_idx, global_partition_lst, global_seqlen_lst.tolist()
+
+    def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen", keep_minibatch=False):
+        """Reorder the data on single controller such that each dp rank gets similar total tokens.
+
+        When use_prefix_grouper is enabled, uses group-level balancing to keep samples with
+        the same uid together on the same rank for prefix sharing optimization.
+        """
+        global_idx, global_partition_lst, seqlen_list = self._balance_batch_global_idx(batch, keep_minibatch=keep_minibatch)
         batch.reorder(global_idx)
         global_balance_stats = log_seqlen_unbalance(
-            seqlen_list=global_seqlen_lst.tolist(), partitions=global_partition_lst, prefix=logging_prefix
+            seqlen_list=seqlen_list, partitions=global_partition_lst, prefix=logging_prefix
         )
         metrics.update(global_balance_stats)
 

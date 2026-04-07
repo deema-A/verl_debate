@@ -539,12 +539,18 @@ class SGLangReplica(RolloutReplica):
             )
 
             node_id = worker_node_ids[node_rank * self.gpus_per_replica_node]
-            if self.is_reward_model:
-                name = f"sglang_server_reward_{self.replica_rank}_{node_rank}"
-            elif self.is_teacher_model:
-                name = f"sglang_server_teacher_{self.replica_rank}_{node_rank}"
+            p = getattr(self.config, "http_ray_server_actor_name_prefix", None)
+            if p:
+                s = str(p)
+                prefix = s if s.endswith("_") else f"{s}_"
             else:
-                name = f"sglang_server_{self.replica_rank}_{node_rank}"
+                prefix = "sglang_"
+            if self.is_reward_model:
+                name = f"{prefix}server_reward_{self.replica_rank}_{node_rank}"
+            elif self.is_teacher_model:
+                name = f"{prefix}server_teacher_{self.replica_rank}_{node_rank}"
+            else:
+                name = f"{prefix}server_{self.replica_rank}_{node_rank}"
             server = self.server_class.options(
                 scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
                     node_id=node_id,

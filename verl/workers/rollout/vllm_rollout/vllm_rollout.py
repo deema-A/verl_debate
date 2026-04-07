@@ -97,6 +97,12 @@ class ServerAdapter(BaseRollout):
         self.device_uuid = get_device_uuid(get_device_id())
         self.zmq_handle = f"ipc:///tmp/rl-colocate-zmq-{self.device_uuid}.sock"
 
+        self._http_ray_server_name_prefix = "vllm_"
+        p = getattr(config, "http_ray_server_actor_name_prefix", None)
+        if p:
+            s = str(p)
+            self._http_ray_server_name_prefix = s if s.endswith("_") else f"{s}_"
+
         self.use_shm = not is_support_ipc()
         if self.use_shm:
             logger.warning(
@@ -131,7 +137,8 @@ class ServerAdapter(BaseRollout):
 
         # Lazy init http server adapter because http server is launched after hybrid engine.
         if self.server_handle is None:
-            self.server_handle = ray.get_actor(f"vllm_server_{self.replica_rank}_{self.node_rank}")
+            name = f"{self._http_ray_server_name_prefix}server_{self.replica_rank}_{self.node_rank}"
+            self.server_handle = ray.get_actor(name)
 
         future = self.server_handle.collective_rpc.remote(method, timeout=timeout, args=args, kwargs=kwargs)
         return future if non_block else await future

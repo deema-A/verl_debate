@@ -1,0 +1,100 @@
+# GSM8K two-model debate: 2 GPUs for actor A (global_pool) + 2 GPUs for actor B (debate_pool_b).
+# vLLM tensor_model_parallel_size=2 per model → 4 GPUs total on one node.
+#
+# GPU pinning (e.g. model A on physical 0,1 and model B on 6,7):
+#   Export only those four devices, in order: first pair → party A, second pair → party B.
+#     export CUDA_VISIBLE_DEVICES=0,1,6,7
+#   Ray then sees cuda:0,1,2,3 mapped to physical 0,1,6,7. Resource pools are created in order:
+#   global_pool (2 GPUs) then debate_pool_b (2 GPUs), so A uses the first two visible IDs and B the last two.
+#
+# Run from repo root:
+#   bash examples/debate/run_gsm8k_debate_2gpu_each.sh
+# Or override models/paths:
+#   MODEL_A=Qwen/Qwen2.5-0.5B-Instruct MODEL_B=Qwen/Qwen2.5-1.5B-Instruct bash ...
+
+# Load base `ppo_trainer` from the installed `verl` package (works from any cwd if `verl` is importable).
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  # Default: GSM8K parquet relative to repo cwd after `examples/data_preprocess/gsm8k.py`; override via env or CLI.
+  train_files: ${oc.env:GSM8K_TRAIN,data/gsm8k/train.parquet}
+  val_files: ${oc.env:GSM8K_TEST,data/gsm8k/test.parquet}
+  max_prompt_length: 512
+  max_response_length: 512
+  train_batch_size: 4
+  train_max_samples: 32
+  val_max_samples: 16
+
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+
+actor_rollout_ref:
+  actor:
+    use_kl_loss: false
+    # FSDPActorConfig requires one of these when use_dynamic_bsz is false.
+    ppo_mini_batch_size: 4
+    ppo_micro_batch_size_per_gpu: 2
+    # hybrid_engine + async vLLM: FSDP must not keep full weights on GPU during vLLM engine
+    # startup (separate processes on the same devices); otherwise vLLM fails with
+    # "Free memory on device ... is less than desired GPU memory utilization".
+    fsdp_config:
+      param_offload: true
+  rollout:
+    name: vllm
+    tensor_model_parallel_size: 2
+    # vLLM v1: preflight needs free_VRAM >= total_VRAM * this value; KV init also needs enough budget for
+    # cache blocks. With param_offload + empty_training_cuda_cache before spawn, most of the card is free;
+    # 0.015 passes preflight but is too small for KV allocation ("No available memory for the cache blocks").
+    gpu_memory_utilization: 0.45
+    n: 2
+    # validate_config requires log_prob micro-batch when use_dynamic_bsz is false.
+    log_prob_micro_batch_size_per_gpu: 4
+  model:
+    path: ${oc.env:MODEL_A,Qwen/Qwen2.5-0.5B-Instruct}
+
+critic:
+  enable: false
+
+reward_model:
+  enable: false
+
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 2
+  critic_warmup: 0
+  # JSONL + W&B: need `pip install wandb` and `wandb login` (or WANDB_API_KEY).
+  logger: [console, wandb]
+  project_name: verl_debate_gsm8k
+  experiment_name: two_gpu_each
+  val_before_train: false
+  total_training_steps: 10
+  save_freq: -1
+  test_freq: -1
+  # Joint A/B text + scalar rewards (JSONL). Single JSON array: jq -s '.' file.jsonl > all.json
+  debate_trajectory_jsonl: outputs/debate_trajectories/two_gpu_each.jsonl
+  # W&B: keep false for metrics-only (party_a/*, party_b/*, training/*, …). Set true to also log
+  # debate/trajectories table (capped — see debate_wandb_trajectory_max_*); full text stays in JSONL.
+  debate_wandb_log_trajectories: false
+
+debate:
+  pool_b:
+    n_gpus_per_node: 2
+    nnodes: 1
+  gsm8k:
+    enable: true
+  # Party B: same training/rollout/ref blocks as A; only model checkpoint differs by default.
+  actor_rollout_ref_b:
+    hybrid_engine: ${actor_rollout_ref.hybrid_engine}
+    nccl_timeout: ${actor_rollout_ref.nccl_timeout}
+    model:
+      path: ${oc.env:MODEL_B,${oc.env:MODEL_A,Qwen/Qwen2.5-0.5B-Instruct}}
+    actor: ${actor_rollout_ref.actor}
+    ref: ${actor_rollout_ref.ref}
+    rollout: ${actor_rollout_ref.rollout}

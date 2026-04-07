@@ -261,4 +261,8 @@ class vLLMOmniReplica(vLLMReplica):
         pass
 
     def _get_server_name_prefix(self) -> str:
+        p = getattr(self.config, "http_ray_server_actor_name_prefix", None)
+        if p:
+            s = str(p)
+            return s if s.endswith("_") else f"{s}_"
         return "vllm_omni_"

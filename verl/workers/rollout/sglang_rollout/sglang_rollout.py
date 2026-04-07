@@ -142,6 +142,12 @@ class ServerAdapter(BaseRollout):
         # Set by engine_workers.update_weights() when lora.merge=False.
         self.sleep_level = 2
 
+        self._http_ray_server_name_prefix = "sglang_"
+        p = getattr(self.config, "http_ray_server_actor_name_prefix", None)
+        if p:
+            s = str(p)
+            self._http_ray_server_name_prefix = s if s.endswith("_") else f"{s}_"
+
     async def _init_server_adapter(self):
         if self._engine is not None:
             return
@@ -162,7 +168,8 @@ class ServerAdapter(BaseRollout):
             return
 
         # Lazy init http server adapter because http server is launched after hybrid engine.
-        self.server_actor = ray.get_actor(f"sglang_server_{self.replica_rank}_{self.node_rank}")
+        name = f"{self._http_ray_server_name_prefix}server_{self.replica_rank}_{self.node_rank}"
+        self.server_actor = ray.get_actor(name)
         server_address, server_port = await self.server_actor.get_server_address.remote()
         logger.debug(
             f"replica_rank={self.replica_rank} node_rank={self.node_rank}, "

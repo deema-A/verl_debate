@@ -136,6 +136,17 @@ trainer:
   # Directory for logging rollout data; no dump if null
   rollout_data_dir: null
 
+  # Debate trainer only: append one JSON object per trajectory per step (A/B prompts+responses+rewards); no dump if null
+  debate_trajectory_jsonl: null
+
+  # Debate trainer only: log a wandb.Table when logger includes wandb or vemlp_wandb (large; off by default)
+  debate_wandb_log_trajectories: false
+
+  # Cap rows/cell size per step for W&B tables
+  debate_wandb_trajectory_max_rows: 32
+
+  debate_wandb_trajectory_max_chars: 4000
+
   # Directory for logging validation data; no dump if null
   validation_data_dir: null
 

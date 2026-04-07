@@ -47,12 +47,19 @@ class SingleTurnAgentLoop(AgentLoopBase):
         images = multi_modal_data.get("images")
         videos = multi_modal_data.get("videos")
 
-        # 2. apply chat template and tokenize
-        prompt_ids = await self.apply_chat_template(
-            messages,
-            images=images,
-            videos=videos,
-        )
+        # Debate / two-model: party B's batch carries token IDs that already include A's decoded reply
+        # (``build_gen_batch_for_party_b``). ``single_turn_agent`` would otherwise retokenize ``raw_prompt``
+        # only and drop the opponent context.
+        pre = kwargs.get("debate_precomputed_prompt_ids", None)
+        if pre is not None:
+            prompt_ids = normalize_token_ids(pre)
+        else:
+            # 2. apply chat template and tokenize
+            prompt_ids = await self.apply_chat_template(
+                messages,
+                images=images,
+                videos=videos,
+            )
 
         # 3. generate sequences
         metrics = {}

@@ -243,6 +243,11 @@ class RolloutConfig(BaseConfig):
     # Extension point for custom configurations
     custom: Optional[dict] = None
 
+    # Prefix for globally named Ray actors for async HTTP rollout servers. Full name is
+    # ``{prefix}server_{replica_rank}_{node_rank}`` (e.g. default vLLM → ``vllm_server_0_0``).
+    # Set a distinct value when running multiple colocated vLLM stacks (e.g. debate model B).
+    http_ray_server_actor_name_prefix: Optional[str] = None
+
     # Checkpoint Engine config for update weights from trainer to rollout
     checkpoint_engine: CheckpointEngineConfig = field(default_factory=CheckpointEngineConfig)
 
